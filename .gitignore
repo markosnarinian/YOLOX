@@ -1,6 +1,9 @@
 ### Linux ###
 *~
 
+# Amp orb portal metadata
+.amp/portals/
+
 # user experiments directory
 YOLOX_outputs/
 datasets/
