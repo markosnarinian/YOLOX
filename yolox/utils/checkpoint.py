@@ -10,6 +10,10 @@ import torch
 
 def load_ckpt(model, ckpt):
     model_state_dict = model.state_dict()
+    if ckpt and not model_state_dict.keys() & ckpt.keys() and all(
+        key.startswith("module.") for key in ckpt
+    ):
+        ckpt = {key.removeprefix("module."): value for key, value in ckpt.items()}
     load_dict = {}
     for key_model, v in model_state_dict.items():
         if key_model not in ckpt:

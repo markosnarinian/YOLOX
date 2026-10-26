@@ -12,11 +12,11 @@ import sys
 import cv2
 import numpy as np
 
-from openvino.inference_engine import IECore
+import openvino as ov
+from openvino.preprocess import PrePostProcessor
 
-from yolox.data.data_augment import preproc as preprocess
-from yolox.data.datasets import COCO_CLASSES
-from yolox.utils import mkdir, multiclass_nms, demo_postprocess, vis
+from yolox.deploy import COCO_CLASSES, demo_postprocess, mkdir, multiclass_nms, vis
+from yolox.deploy import preproc as preprocess
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,10 +57,8 @@ def parse_args() -> argparse.Namespace:
         '--device',
         default='CPU',
         type=str,
-        help='Optional. Specify the target device to infer on; CPU, GPU, \
-              MYRIAD, HDDL or HETERO: is acceptable. The sample will look \
-              for a suitable plugin for device specified. Default value \
-              is CPU.')
+        help='Optional. OpenVINO device name (default: CPU). Other devices, '
+             'such as GPU or AUTO, require a supported plugin and hardware.')
     args.add_argument(
         '--labels',
         default=None,
@@ -79,54 +77,54 @@ def main():
     log.basicConfig(format='[ %(levelname)s ] %(message)s', level=log.INFO, stream=sys.stdout)
     args = parse_args()
 
-    # ---------------------------Step 1. Initialize inference engine core--------------------------------------------------
-    log.info('Creating Inference Engine')
-    ie = IECore()
+    log.info('Creating OpenVINO Runtime Core')
+    core = ov.Core()
 
-    # ---------------------------Step 2. Read a model in OpenVINO Intermediate Representation or ONNX format---------------
+    # Read an IR (.xml with companion .bin) or ONNX model.
     log.info(f'Reading the network: {args.model}')
-    # (.xml and .bin files) or (.onnx file)
-    net = ie.read_network(model=args.model)
+    model = core.read_model(args.model)
 
-    if len(net.input_info) != 1:
+    if len(model.inputs) != 1:
         log.error('Sample supports only single input topologies')
         return -1
-    if len(net.outputs) != 1:
+    if len(model.outputs) != 1:
         log.error('Sample supports only single output topologies')
         return -1
 
-    # ---------------------------Step 3. Configure input & output----------------------------------------------------------
-    log.info('Configuring input and output blobs')
-    # Get names of input and output blobs
-    input_blob = next(iter(net.input_info))
-    out_blob = next(iter(net.outputs))
+    if model.input().partial_shape.is_dynamic:
+        log.error('Sample requires a static [1, 3, H, W] input shape')
+        return -1
+    shape = list(model.input().shape)
+    if len(shape) != 4 or shape[:2] != [1, 3]:
+        log.error('Sample requires a static [1, 3, H, W] input shape')
+        return -1
+    _, _, h, w = shape
 
-    # Set input and output precision manually
-    net.input_info[input_blob].precision = 'FP32'
-    net.outputs[out_blob].precision = 'FP16'
+    # Keep BGR, unnormalized CHW preprocessing in Python. Explicit tensor types
+    # also support models whose internal input/output element type is FP16.
+    ppp = PrePostProcessor(model)
+    ppp.input().tensor().set_element_type(ov.Type.f32)
+    ppp.output().tensor().set_element_type(ov.Type.f32)
+    model = ppp.build()
 
-    # Get a number of classes recognized by a model
-    num_of_classes = max(net.outputs[out_blob].shape)
-
-    # ---------------------------Step 4. Loading model to the device-------------------------------------------------------
     log.info('Loading the model to the plugin')
-    exec_net = ie.load_network(network=net, device_name=args.device)
+    compiled_model = core.compile_model(model, args.device)
+    infer_request = compiled_model.create_infer_request()
 
-    # ---------------------------Step 5. Create infer request--------------------------------------------------------------
-    # load_network() method of the IECore class with a specified number of requests (default 1) returns an ExecutableNetwork
-    # instance which stores infer requests. So you already created Infer requests in the previous step.
-
-    # ---------------------------Step 6. Prepare input---------------------------------------------------------------------
     origin_img = cv2.imread(args.input)
-    _, _, h, w = net.input_info[input_blob].input_data.shape
+    if origin_img is None:
+        log.error(f'Could not read image: {args.input}')
+        return -1
     image, ratio = preprocess(origin_img, (h, w))
 
-    # ---------------------------Step 7. Do inference----------------------------------------------------------------------
     log.info('Starting inference in synchronous mode')
-    res = exec_net.infer(inputs={input_blob: image})
-
-    # ---------------------------Step 8. Process output--------------------------------------------------------------------
-    res = res[out_blob]
+    infer_request.infer({0: image[np.newaxis, ...]})
+    # Copy before decoding, which modifies the array in-place.
+    res = infer_request.get_output_tensor().data.copy()
+    num_anchors = sum((h // stride) * (w // stride) for stride in (8, 16, 32))
+    if res.shape != (1, num_anchors, len(COCO_CLASSES) + 5):
+        log.error('Sample requires raw YOLOX output [1, anchors, 85] (strides 8, 16, 32)')
+        return -1
 
     predictions = demo_postprocess(res, (h, w))[0]
 

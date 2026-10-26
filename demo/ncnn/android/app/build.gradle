@@ -1,23 +1,33 @@
-apply plugin: 'com.android.application'
+plugins {
+    id 'com.android.application'
+}
 
 android {
-    compileSdkVersion 24
-    buildToolsVersion "29.0.2"
+    namespace 'com.megvii.yoloXncnn'
+    compileSdk 36
+    buildToolsVersion '35.0.0'
+    ndkVersion '28.2.13676358'
 
     defaultConfig {
         applicationId "com.megvii.yoloXncnn"
-        archivesBaseName = "$applicationId"
+        minSdk 24
+        targetSdk 36
+        versionCode 1
+        versionName '1.1'
 
         ndk {
-            moduleName "ncnn"
             abiFilters "armeabi-v7a", "arm64-v8a"
         }
-        minSdkVersion 24
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     externalNativeBuild {
         cmake {
-            version "3.10.2"
+            version "3.22.1"
             path file('src/main/jni/CMakeLists.txt')
         }
     }

@@ -56,8 +56,12 @@ def launch(
                        Can be set to auto to automatically select a free port on localhost
         args (tuple): arguments passed to main_func
     """
+    if num_gpus_per_machine < 1 or num_gpus_per_machine > torch.cuda.device_count():
+        raise RuntimeError("Training/evaluation requires at least one available CUDA device")
     world_size = num_machines * num_gpus_per_machine
     if world_size > 1:
+        if sys.platform != "linux":
+            raise RuntimeError("Distributed YOLOX training/evaluation is supported on Linux only")
         # https://github.com/pytorch/pytorch/pull/14391
         # TODO prctl in spawned processes
 
@@ -72,7 +76,7 @@ def launch(
         cache = vars(args[1]).get("cache", False)
 
         # To use numpy memmap for caching image into RAM, we have to use fork method
-        if cache:
+        if cache == "ram" or cache is True:
             assert sys.platform != "win32", (
                 "As Windows platform doesn't support fork method, "
                 "do not add --cache in your training command."

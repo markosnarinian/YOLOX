@@ -52,6 +52,8 @@ def create_yolox_model(name: str, pretrained: bool = True, num_classes: int = 80
     if device is None:
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
+    if device.type not in ("cpu", "cuda"):
+        raise ValueError(f"Unsupported device {device}; supported backends are CPU and CUDA")
 
     assert name in _CKPT_FULL_PATH or name == "yolox_custom", \
         f"user should use one of value in {_CKPT_FULL_PATH.keys()} or \"yolox_custom\""
@@ -61,7 +63,7 @@ def create_yolox_model(name: str, pretrained: bool = True, num_classes: int = 80
         yolox_model = exp.get_model()
         if pretrained and num_classes == 80:
             weights_url = _CKPT_FULL_PATH[name]
-            ckpt = load_state_dict_from_url(weights_url, map_location="cpu")
+            ckpt = load_state_dict_from_url(weights_url, map_location="cpu", weights_only=True)
             if "model" in ckpt:
                 ckpt = ckpt["model"]
             yolox_model.load_state_dict(ckpt)
@@ -70,7 +72,7 @@ def create_yolox_model(name: str, pretrained: bool = True, num_classes: int = 80
         exp: Exp = get_exp(exp_file=exp_path)
         yolox_model = exp.get_model()
         if ckpt_path:
-            ckpt = torch.load(ckpt_path, map_location="cpu")
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
             if "model" in ckpt:
                 ckpt = ckpt["model"]
             yolox_model.load_state_dict(ckpt)

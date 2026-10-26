@@ -5,16 +5,17 @@
 
 Step1. Install YOLOX.
 ```shell
-git clone git@github.com:Megvii-BaseDetection/YOLOX.git
+git clone https://github.com/markosnarinian/YOLOX.git
 cd YOLOX
-pip3 install -U pip && pip3 install -r requirements.txt
-pip3 install -v -e .  # or  python3 setup.py develop
+uv sync --locked --extra cpu --extra export
+uv run --no-sync pytest -q
 ```
-Step2. Install [pycocotools](https://github.com/cocodataset/cocoapi).
 
-```shell
-pip3 install cython; pip3 install 'git+https://github.com/cocodataset/cocoapi.git#subdirectory=PythonAPI'
-```
+Python 3.12/3.13 is required. Install uv first; for NVIDIA CUDA use `--extra cuda`
+instead of `--extra cpu`. Pycocotools is installed automatically. Pip users can
+use `python -m pip install -e '.[export]'` after selecting matching PyTorch
+binaries. See [platform support](platform_support.md) for backend restrictions.
+Run the following Python commands with `uv run --no-sync python` in this environment.
 
 ## 2.Demo
 

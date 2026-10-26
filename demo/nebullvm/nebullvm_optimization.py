@@ -6,10 +6,9 @@ from yolox.exp import get_exp
 # Get YOLO model
 exp = get_exp(None, 'yolox-s') # select model name
 model = exp.get_model()
-model.cuda()
-model.eval()
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+model.eval()
 
 # Create dummy data for the optimizer
 input_data =  [((torch.randn(1, 3, 640, 640).to(device), ), 0) for i in range(100)] 

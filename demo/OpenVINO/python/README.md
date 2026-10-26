@@ -1,89 +1,40 @@
-# YOLOX-OpenVINO in Python
+# YOLOX with OpenVINO Runtime in Python
 
-This tutorial includes a Python demo for OpenVINO, as well as some converted models.
+See the [shared guide](../README.md) for the supported **OpenVINO 2025.4.1**
+baseline, OS/hardware limits, model contract and optional IR conversion.
 
-### Download OpenVINO models.
+## Install
 
-| Model | Parameters | GFLOPs | Test Size | mAP | Weights |
-|:------| :----: | :----: | :---: | :---: | :---: |
-|  [YOLOX-Nano](../../../exps/default/nano.py) |  0.91M  | 1.08 | 416x416 | 25.8 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano_openvino.tar.gz) |
-|  [YOLOX-Tiny](../../../exps/default/yolox_tiny.py) | 5.06M     | 6.45 | 416x416 |32.8 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny_openvino.tar.gz) |
-|  [YOLOX-S](../../../exps/default/yolox_s.py) | 9.0M | 26.8 | 640x640 |40.5 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s_openvino.tar.gz) |
-|  [YOLOX-M](../../../exps/default/yolox_m.py) | 25.3M | 73.8 | 640x640 |47.2 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_m_openvino.tar.gz) |
-|  [YOLOX-L](../../../exps/default/yolox_l.py) | 54.2M | 155.6 | 640x640 |50.1 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_l_openvino.tar.gz) |
-|  [YOLOX-Darknet53](../../../exps/default/yolov3.py) | 63.72M | 185.3 | 640x640 |48.0 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_dark_openvino.tar.gz) | 
-|  [YOLOX-X](../../../exps/default/yolox_x.py) | 99.1M | 281.9 | 640x640 |51.5 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_x_openvino.tar.gz) |
-
-## Install OpenVINO Toolkit
-
-Please visit [Openvino Homepage](https://docs.openvinotoolkit.org/latest/get_started_guides.html) for more details.
-
-## Set up the Environment
-
-### For Linux
-
-**Option1. Set up the environment tempororally. You need to run this command everytime you start a new shell window.**
+Run from the repository root. This inference-only environment needs no PyTorch,
+training dependencies, `openvino-dev`, or native SDK setup script. It imports the
+existing `yolox.deploy` helpers directly from the checkout.
 
 ```shell
-source /opt/intel/openvino_2021/bin/setupvars.sh
+python3.12 -m venv .venv-openvino
+source .venv-openvino/bin/activate
+python -m pip install 'openvino==2025.4.1' 'numpy>=1.26,<2.4' 'opencv-python-headless>=4.10,<5'
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+python -c 'import openvino as ov; print(ov.__version__); print(ov.Core().available_devices)'
 ```
 
-**Option2. Set up the environment permenantly.**
+Use Python 3.12 or 3.13. `opencv-python` can replace the headless wheel if a GUI
+is needed; do not install both wheels in the same environment.
 
-*Step1.* For Linux:
-```shell
-vim ~/.bashrc
-```
-
-*Step2.* Add the following line into your file:
-
-```shell
-source /opt/intel/openvino_2021/bin/setupvars.sh
-```
-
-*Step3.* Save and exit the file, then run:
+## Run
 
 ```shell
-source ~/.bashrc
+python demo/OpenVINO/python/openvino_inference.py -m yolox.onnx -i assets/dog.jpg
+python demo/OpenVINO/python/openvino_inference.py -m yolox.xml -i assets/dog.jpg -o demo_output -s 0.3 -d CPU
 ```
 
+The model must have one static `[1, 3, H, W]` input and one undecoded
+`[1, anchors, 85]` COCO output with strides 8/16/32. The image is written to
+`<output_dir>/<input_basename>`; `demo_output` and visualization confidence 0.3
+remain the defaults. NMS uses IoU 0.45 and candidate score 0.1 as before.
+`--labels` and `--number_top` remain accepted for CLI compatibility but, as in
+the original demo, do not change the COCO labels or detections.
 
-## Convert model
-
-1. Export ONNX model
-
-   Please refer to the [ONNX tutorial](https://github.com/Megvii-BaseDetection/YOLOX/demo/ONNXRuntime). **Note that you should set --opset to 10, otherwise your next step will fail.**
-
-2. Convert ONNX to OpenVINO
-
-   ``` shell
-   cd <INSTSLL_DIR>/openvino_2021/deployment_tools/model_optimizer
-   ```
-
-   Install requirements for convert tool
-
-   ```shell
-   sudo ./install_prerequisites/install_prerequisites_onnx.sh
-   ```
-
-   Then convert model.
-   ```shell
-   python3 mo.py --input_model <ONNX_MODEL> --input_shape <INPUT_SHAPE> [--data_type FP16]
-   ```
-   For example:
-   ```shell
-   python3 mo.py --input_model yolox.onnx --input_shape [1,3,640,640] --data_type FP16 --output_dir converted_output
-   ```
-
-## Demo
-
-### python
-
-```shell
-python openvino_inference.py -m <XML_MODEL_PATH> -i <IMAGE_PATH> 
-```
-or
-```shell
-python openvino_inference.py -m <XML_MODEL_PATH> -i <IMAGE_PATH> -o <OUTPUT_DIR> -s <SCORE_THR> -d <DEVICE>
-```
-
+The implementation uses `ov.Core.read_model`, `compile_model`, an explicit
+synchronous infer request, and FP32 Runtime input/output tensors. Python adds
+the batch dimension explicitly and copies the output before in-place decoding.
+No preprocessing is embedded in the model and no RGB conversion is performed.

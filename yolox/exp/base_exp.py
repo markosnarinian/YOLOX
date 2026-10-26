@@ -64,6 +64,14 @@ class BaseExp(metaclass=ABCMeta):
         ]
         return tabulate(exp_table, headers=table_header, tablefmt="fancy_grid")
 
+    def __reduce__(self):
+        # Spawned workers cannot import a module named after an arbitrary file.
+        # Reload its explicit path before restoring overridden experiment state.
+        if hasattr(self, "_exp_file"):
+            from .build import get_exp_by_file
+            return get_exp_by_file, (self._exp_file,), self.__dict__
+        return object.__reduce__(self)
+
     def merge(self, cfg_list):
         assert len(cfg_list) % 2 == 0, f"length must be even, check value here: {cfg_list}"
         for k, v in zip(cfg_list[0::2], cfg_list[1::2]):
@@ -71,6 +79,13 @@ class BaseExp(metaclass=ABCMeta):
             if hasattr(self, k):
                 src_value = getattr(self, k)
                 src_type = type(src_value)
+
+                if isinstance(src_value, bool):
+                    boolean_values = {"true": True, "false": False, "1": True, "0": False}
+                    try:
+                        v = boolean_values[str(v).lower()]
+                    except KeyError:
+                        raise ValueError(f"Invalid boolean override for {k}: {v}") from None
 
                 # pre-process input if source type is list or tuple
                 if isinstance(src_value, (List, Tuple)):

@@ -1,97 +1,79 @@
-# YOLOX-OpenVINO in C++
+# YOLOX with OpenVINO Runtime in C++
 
-This tutorial includes a C++ demo for OpenVINO, as well as some converted models.
+See the [shared guide](../README.md) for the supported **OpenVINO 2025.4.1**
+baseline, OS/hardware limits, model contract and optional IR conversion. The
+full C++ demo was built and run on CPU in the Linux development orb. Do not
+infer GPU/NPU or other OS support from successful CPU inference.
 
-### Download OpenVINO models.
+## Build on Linux x86-64
 
-| Model | Parameters | GFLOPs | Test Size | mAP | Weights |
-|:------| :----: | :----: | :---: | :---: | :---: |
-|  [YOLOX-Nano](../../../exps/default/nano.py) |  0.91M  | 1.08 | 416x416 | 25.8 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano_openvino.tar.gz) |
-|  [YOLOX-Tiny](../../../exps/default/yolox_tiny.py) | 5.06M     | 6.45 | 416x416 |32.8 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny_openvino.tar.gz) |
-|  [YOLOX-S](../../../exps/default/yolox_s.py) | 9.0M | 26.8 | 640x640 |40.5 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s_openvino.tar.gz) |
-|  [YOLOX-M](../../../exps/default/yolox_m.py) | 25.3M | 73.8 | 640x640 |47.2 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_m_openvino.tar.gz) |
-|  [YOLOX-L](../../../exps/default/yolox_l.py) | 54.2M | 155.6 | 640x640 |50.1 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_l_openvino.tar.gz) |
-|  [YOLOX-Darknet53](../../../exps/default/yolov3.py) | 63.72M | 185.3 | 640x640 |48.0 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_dark_openvino.tar.gz) | 
-|  [YOLOX-X](../../../exps/default/yolox_x.py) | 99.1M | 281.9 | 640x640 |51.5 | [github](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_x_openvino.tar.gz) |
+Requirements:
 
-## Install OpenVINO Toolkit
+* OpenVINO **2025.4.1** native Runtime SDK (headers, libraries, CPU plugin and
+  `OpenVINOConfig.cmake`), from the
+  [official installation instructions](https://docs.openvino.ai/2025/get-started/install-openvino.html).
+* OpenCV 4 development package, including core, imgproc and imgcodecs (on
+  Ubuntu: `sudo apt install libopencv-dev`). A Python `cv2` wheel alone is not a
+  C++ OpenCV SDK.
+* CMake 3.16+ and a C++17 compiler supported by the SDK, e.g. GCC 11 on Ubuntu
+  22.04 or GCC 13 on Ubuntu 24.04.
 
-Please visit [Openvino Homepage](https://docs.openvinotoolkit.org/latest/get_started_guides.html) for more details.
-
-## Set up the Environment
-
-### For Linux
-
-**Option1. Set up the environment tempororally. You need to run this command everytime you start a new shell window.**
+From the repository root, configure using the installed SDK's CMake directory
+(replace the example path with the directory containing `OpenVINOConfig.cmake`):
 
 ```shell
-source /opt/intel/openvino_2021/bin/setupvars.sh
+cmake -S demo/OpenVINO/cpp -B /tmp/yolox-openvino-build \
+  -DOpenVINO_DIR=/path/to/openvino/runtime/cmake
+cmake --build /tmp/yolox-openvino-build --parallel
 ```
 
-**Option2. Set up the environment permenantly.**
+Alternatively source the **2025.4.1** SDK's `setupvars.sh` before configuring,
+if provided by your distribution. Ensure its shared libraries and CPU plugin
+remain discoverable when executing the program. CMake links the imported
+`openvino::runtime` target; there is no separate InferenceEngine or ngraph
+dependency. Older SDKs are rejected; newer SDKs need independent validation.
 
-*Step1.* For Linux:
-```shell
-vim ~/.bashrc 
-```
+On Linux, OpenVINO and OpenCV must use compatible libstdc++ ABIs. The OpenVINO
+Python wheel's CMake package sets `_GLIBCXX_USE_CXX11_ABI=0`; pairing that wheel
+with Debian's system OpenCV (ABI 1) compiled but failed to link `cv::imread`,
+`cv::putText` and `cv::imwrite`. Use the native Ubuntu 22 SDK archive with system
+OpenCV instead; do not override the ABI macro to hide a binary incompatibility.
 
-*Step2.* Add the following line into your file:
+### Executed build baseline
 
-```shell
-source /opt/intel/openvino_2021/bin/setupvars.sh
-```
+On 2026-10-25, the complete demo configured, compiled, linked and ran using
+Debian 12 x86-64, GCC 12.2, CMake 3.25.1, Ninja, OpenCV 4.6.0 and the official
+Ubuntu 22 OpenVINO 2025.4.1 native SDK:
 
-*Step3.* Save and exit the file, then run:
+* [SDK archive](https://storage.openvinotoolkit.org/repositories/openvino/packages/2025.4.1/linux/openvino_toolkit_ubuntu22_2025.4.1.20426.82bbf0292c5_x86_64.tgz)
+* SHA-256: `4e9501655a30e93ebdd1c21944c16eb094012cc541653f8151ed981061466d84`,
+  verified against the publisher's accompanying `.sha256` file.
 
-```shell
-source ~/.bashrc
-```
+Using a Nano 416 ONNX model exported by this repository, CPU inference on
+`assets/dog.jpg` reported class 16 (dog) 0.85507, class 1 (bicycle) 0.80264 and
+class 2 (car) 0.79819, and wrote `_demo.jpg`. This is an executed Linux CPU
+smoke test, not vendor certification of Debian or an accuracy benchmark.
 
-
-## Convert model
-
-1. Export ONNX model
-   
-   Please refer to the [ONNX tutorial](../../ONNXRuntime). **Note that you should set --opset to 10, otherwise your next step will fail.**
-
-2. Convert ONNX to OpenVINO 
-
-   ``` shell
-   cd <INSTSLL_DIR>/openvino_2021/deployment_tools/model_optimizer
-   ```
-
-   Install requirements for convert tool
-
-   ```shell
-   sudo ./install_prerequisites/install_prerequisites_onnx.sh
-   ```
-
-   Then convert model.
-   ```shell
-   python3 mo.py --input_model <ONNX_MODEL> --input_shape <INPUT_SHAPE> [--data_type FP16]
-   ```
-   For example:
-   ```shell
-   python3 mo.py --input_model yolox_tiny.onnx --input_shape [1,3,416,416] --data_type FP16
-   ```  
-
-   Make sure the input shape is consistent with [those](yolox_openvino.cpp#L24-L25) in cpp file. 
-
-## Build 
-
-### Linux
-```shell
-source /opt/intel/openvino_2021/bin/setupvars.sh
-mkdir build
-cd build
-cmake ..
-make
-```
-
-## Demo
-
-### c++
+## Run
 
 ```shell
-./yolox_openvino <XML_MODEL_PATH> <IMAGE_PATH> <DEVICE>
+/tmp/yolox-openvino-build/yolox_openvino yolox.onnx assets/dog.jpg CPU
+# Or use yolox.xml, keeping yolox.bin beside it:
+/tmp/yolox-openvino-build/yolox_openvino yolox.xml assets/dog.jpg CPU
 ```
+
+The positional CLI stays `<model> <image> <device>`. Detection records are
+printed to stderr and the visualization is written to **`_demo.jpg` in the
+current working directory**, as before.
+
+The C++ demo retains `INPUT_W = INPUT_H = 416`, 80 COCO classes, strides
+8/16/32, confidence 0.3, IoU 0.45 and class-agnostic NMS. It validates a static
+`[1, 3, 416, 416]` input and raw `[1, 3549, 85]` output rather than reading or
+writing incompatible buffers. For another input size, update `INPUT_W` and
+`INPUT_H` in `yolox_openvino.cpp`, rebuild and use a matching model.
+
+The Runtime path uses `ov::Core`, `ov::CompiledModel`, `ov::InferRequest` and
+`ov::Tensor`. A `PrePostProcessor` declares FP32 host tensors (and converts to
+the model's types when needed); the demo still performs BGR resize/padding/CHW
+packing itself. Output tensor/request lifetimes cover decoding. Unsupported
+models and unreadable images fail with a nonzero exit status.

@@ -44,7 +44,7 @@ class Trainer:
         # training related attr
         self.max_epoch = exp.max_epoch
         self.amp_training = args.fp16
-        self.scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=args.fp16)
         self.is_distributed = get_world_size() > 1
         self.rank = get_rank()
         self.local_rank = get_local_rank()
@@ -56,6 +56,7 @@ class Trainer:
         self.data_type = torch.float16 if args.fp16 else torch.float32
         self.input_size = exp.input_size
         self.best_ap = 0
+        self.resume_checkpoint = None
 
         # metric record
         self.meter = MeterBuffer(window_size=exp.print_interval)
@@ -103,7 +104,7 @@ class Trainer:
         inps, targets = self.exp.preprocess(inps, targets, self.input_size)
         data_end_time = time.time()
 
-        with torch.cuda.amp.autocast(enabled=self.amp_training):
+        with torch.amp.autocast("cuda", enabled=self.amp_training):
             outputs = self.model(inps, targets)
 
         loss = outputs["total_loss"]
@@ -171,6 +172,12 @@ class Trainer:
         if self.use_model_ema:
             self.ema_model = ModelEMA(model, 0.9998)
             self.ema_model.updates = self.max_iter * self.start_epoch
+            if self.resume_checkpoint is not None:
+                self.ema_model.ema.load_state_dict(self.resume_checkpoint["model"])
+                self.ema_model.updates = self.resume_checkpoint.get(
+                    "ema_updates", self.ema_model.updates
+                )
+        self.resume_checkpoint = None
 
         self.model = model
 
@@ -230,11 +237,9 @@ class Trainer:
                 self.save_ckpt(ckpt_name="last_mosaic_epoch")
 
     def after_epoch(self):
-        self.save_ckpt(ckpt_name="latest")
-
         if (self.epoch + 1) % self.exp.eval_interval == 0:
-            all_reduce_norm(self.model)
             self.evaluate_and_save_model()
+        self.save_ckpt(ckpt_name="latest")
 
     def before_iter(self):
         pass
@@ -316,11 +321,24 @@ class Trainer:
             else:
                 ckpt_file = self.args.ckpt
 
-            ckpt = torch.load(ckpt_file, map_location=self.device)
+            ckpt = torch.load(ckpt_file, map_location=self.device, weights_only=True)
+            for name in ("model", "training_model"):
+                state = ckpt.get(name)
+                if state and all(key.startswith("module.") for key in state):
+                    ckpt[name] = {key.removeprefix("module."): value for key, value in state.items()}
             # resume the model/optimizer state dict
-            model.load_state_dict(ckpt["model"])
+            if self.use_model_ema and "training_model" not in ckpt:
+                logger.warning(
+                    "Legacy checkpoint has no separate live model; resuming from its inference "
+                    "weights. Exact pre-interruption training state cannot be recovered."
+                )
+            state = ckpt.get("training_model", ckpt["model"])
+            model.load_state_dict(state)
             self.optimizer.load_state_dict(ckpt["optimizer"])
-            self.best_ap = ckpt.pop("best_ap", 0)
+            if "scaler" in ckpt:
+                self.scaler.load_state_dict(ckpt["scaler"])
+            self.resume_checkpoint = ckpt
+            self.best_ap = ckpt.get("best_ap", 0)
             # resume the training states variables
             start_epoch = (
                 self.args.start_epoch - 1
@@ -337,7 +355,7 @@ class Trainer:
             if self.args.ckpt is not None:
                 logger.info("loading checkpoint for fine tuning")
                 ckpt_file = self.args.ckpt
-                ckpt = torch.load(ckpt_file, map_location=self.device)["model"]
+                ckpt = torch.load(ckpt_file, map_location=self.device, weights_only=True)["model"]
                 model = load_ckpt(model, ckpt)
             self.start_epoch = 0
 
@@ -351,6 +369,7 @@ class Trainer:
             if is_parallel(evalmodel):
                 evalmodel = evalmodel.module
 
+        all_reduce_norm(evalmodel)
         with adjust_status(evalmodel, training=False):
             (ap50_95, ap50, summary), predictions = self.exp.eval(
                 evalmodel, self.evaluator, self.is_distributed, return_outputs=True
@@ -385,7 +404,7 @@ class Trainer:
         if self.save_history_ckpt:
             self.save_ckpt(f"epoch_{self.epoch + 1}", ap=ap50_95)
 
-        if self.args.logger == "mlflow":
+        if self.rank == 0 and self.args.logger == "mlflow":
             metadata = {
                     "epoch": self.epoch + 1,
                     "input_size": self.input_size,
@@ -398,12 +417,16 @@ class Trainer:
 
     def save_ckpt(self, ckpt_name, update_best_ckpt=False, ap=None):
         if self.rank == 0:
-            save_model = self.ema_model.ema if self.use_model_ema else self.model
+            training_model = self.model.module if is_parallel(self.model) else self.model
+            save_model = self.ema_model.ema if self.use_model_ema else training_model
             logger.info("Save weights to {}".format(self.file_name))
             ckpt_state = {
                 "start_epoch": self.epoch + 1,
                 "model": save_model.state_dict(),
+                "training_model": training_model.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
+                "scaler": self.scaler.state_dict(),
+                "ema_updates": self.ema_model.updates if self.use_model_ema else 0,
                 "best_ap": self.best_ap,
                 "curr_ap": ap,
             }

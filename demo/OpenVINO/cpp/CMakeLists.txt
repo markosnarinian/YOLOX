@@ -1,23 +1,12 @@
-cmake_minimum_required(VERSION 3.4.1)
-set(CMAKE_CXX_STANDARD 14)
+cmake_minimum_required(VERSION 3.16)
+project(yolox_openvino_demo LANGUAGES CXX)
 
-project(yolox_openvino_demo)
-
-find_package(OpenCV REQUIRED)
-find_package(InferenceEngine REQUIRED)
-find_package(ngraph REQUIRED)
-
-include_directories(
-    ${OpenCV_INCLUDE_DIRS}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_BINARY_DIR}
-)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
+find_package(OpenVINO 2025.4.1 REQUIRED COMPONENTS Runtime)
 
 add_executable(yolox_openvino yolox_openvino.cpp)
+target_compile_features(yolox_openvino PRIVATE cxx_std_17)
+set_target_properties(yolox_openvino PROPERTIES CXX_EXTENSIONS OFF)
+target_include_directories(yolox_openvino PRIVATE ${OpenCV_INCLUDE_DIRS})
 
-target_link_libraries(
-     yolox_openvino
-    ${InferenceEngine_LIBRARIES}
-    ${NGRAPH_LIBRARIES}
-    ${OpenCV_LIBS} 
-)
+target_link_libraries(yolox_openvino PRIVATE openvino::runtime ${OpenCV_LIBS})

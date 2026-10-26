@@ -1,0 +1,7 @@
+/.gradle/
+/.deps/
+/local.properties
+**/build/
+**/.cxx/
+**/.externalNativeBuild/
+/app/src/main/assets/yolox.bin

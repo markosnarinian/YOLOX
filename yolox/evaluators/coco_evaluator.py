@@ -137,7 +137,7 @@ class COCOEvaluator:
         if half:
             model = model.half()
         ids = []
-        data_list = []
+        data_by_image = {}
         output_data = defaultdict()
         progress_bar = tqdm if is_main_process() else iter
 
@@ -149,7 +149,7 @@ class COCOEvaluator:
             from torch2trt import TRTModule
 
             model_trt = TRTModule()
-            model_trt.load_state_dict(torch.load(trt_file))
+            model_trt.load_state_dict(torch.load(trt_file, weights_only=True))
 
             x = torch.ones(1, 3, test_size[0], test_size[1]).cuda()
             model(x)
@@ -183,7 +183,10 @@ class COCOEvaluator:
 
             data_list_elem, image_wise_data = self.convert_to_coco_format(
                 outputs, info_imgs, ids, return_outputs=True)
-            data_list.extend(data_list_elem)
+            batch_data = {int(img_id): [] for img_id in ids}
+            for detection in data_list_elem:
+                batch_data[detection["image_id"]].append(detection)
+            data_by_image.update(batch_data)
             output_data.update(image_wise_data)
 
         statistics = torch.cuda.FloatTensor([inference_time, nms_time, n_samples])
@@ -191,12 +194,12 @@ class COCOEvaluator:
             # different process/device might have different speed,
             # to make sure the process will not be stucked, sync func is used here.
             synchronize()
-            data_list = gather(data_list, dst=0)
+            data_by_image = dict(ChainMap(*gather(data_by_image, dst=0)))
             output_data = gather(output_data, dst=0)
-            data_list = list(itertools.chain(*data_list))
             output_data = dict(ChainMap(*output_data))
             torch.distributed.reduce(statistics, dst=0)
 
+        data_list = list(itertools.chain.from_iterable(data_by_image.values()))
         eval_results = self.evaluate_prediction(data_list, statistics)
         synchronize()
 
@@ -210,6 +213,7 @@ class COCOEvaluator:
         for (output, img_h, img_w, img_id) in zip(
             outputs, info_imgs[0], info_imgs[1], ids
         ):
+            image_wise_data[int(img_id)] = {"bboxes": [], "scores": [], "categories": []}
             if output is None:
                 continue
             output = output.cpu()

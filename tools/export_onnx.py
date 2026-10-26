@@ -26,7 +26,7 @@ def make_parser():
         "--output", default="output", type=str, help="output node name of onnx model"
     )
     parser.add_argument(
-        "-o", "--opset", default=11, type=int, help="onnx opset version"
+        "-o", "--opset", default=17, type=int, help="onnx opset version"
     )
     parser.add_argument("--batch-size", type=int, default=1, help="batch size")
     parser.add_argument(
@@ -58,7 +58,7 @@ def make_parser():
     return parser
 
 
-@logger.catch
+@logger.catch(reraise=True)
 def main():
     args = make_parser().parse_args()
     logger.info("args value: {}".format(args))
@@ -76,7 +76,7 @@ def main():
         ckpt_file = args.ckpt
 
     # load the model state dict
-    ckpt = torch.load(ckpt_file, map_location="cpu")
+    ckpt = torch.load(ckpt_file, map_location="cpu", weights_only=True)
 
     model.eval()
     if "model" in ckpt:
@@ -88,7 +88,7 @@ def main():
     logger.info("loading checkpoint done.")
     dummy_input = torch.randn(args.batch_size, 3, exp.test_size[0], exp.test_size[1])
 
-    torch.onnx._export(
+    torch.onnx.export(
         model,
         dummy_input,
         args.output_name,
@@ -97,6 +97,7 @@ def main():
         dynamic_axes={args.input: {0: 'batch'},
                       args.output: {0: 'batch'}} if args.dynamic else None,
         opset_version=args.opset,
+        dynamo=False,
     )
     logger.info("generated onnx model named {}".format(args.output_name))
 

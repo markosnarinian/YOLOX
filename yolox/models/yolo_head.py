@@ -471,7 +471,7 @@ class YOLOXHead(nn.Module):
         if mode == "cpu":
             cls_preds_, obj_preds_ = cls_preds_.cpu(), obj_preds_.cpu()
 
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(cls_preds_.device.type, enabled=False):
             cls_preds_ = (
                 cls_preds_.float().sigmoid_() * obj_preds_.float().sigmoid_()
             ).sqrt()
@@ -619,6 +619,8 @@ class YOLOXHead(nn.Module):
             num_gt = int(num_gt)
             if num_gt == 0:
                 fg_mask = outputs.new_zeros(total_num_anchors).bool()
+                gt_bboxes_per_image = label[:0, 1:5]
+                matched_gt_inds = torch.empty(0, dtype=torch.long, device=outputs.device)
             else:
                 gt_bboxes_per_image = label[:num_gt, 1:5]
                 gt_classes = label[:num_gt, 0]

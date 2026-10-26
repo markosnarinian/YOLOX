@@ -122,7 +122,9 @@ class YOLOXHead(M.Module):
 
         self.use_l1 = False
         self.strides = strides
-        self.grids = [F.zeros(1)] * len(in_channels)
+        # Derived caches are not checkpoint parameters. In particular, do not
+        # register a dummy MegEngine tensor absent from PyTorch checkpoints.
+        self.grids = [None] * len(in_channels)
 
     def forward(self, xin, labels=None, imgs=None):
         outputs = []
@@ -159,7 +161,7 @@ class YOLOXHead(M.Module):
         batch_size = output.shape[0]
         n_ch = 5 + self.num_classes
         hsize, wsize = output.shape[-2:]
-        if grid.shape[2:4] != output.shape[2:4]:
+        if grid is None or grid.shape[2:4] != output.shape[2:4]:
             yv, xv = meshgrid([F.arange(hsize), F.arange(wsize)])
             grid = F.stack((xv, yv), 2).reshape(1, 1, hsize, wsize, 2).type(dtype)
             self.grids[k] = grid

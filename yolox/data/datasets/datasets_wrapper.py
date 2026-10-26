@@ -157,13 +157,11 @@ class CacheDataset(Dataset, metaclass=ABCMeta):
         super().__init__(input_dimension)
         self.cache = cache
         self.cache_type = cache_type
+        self.imgs = None
 
         if self.cache and self.cache_type == "disk":
             self.cache_dir = os.path.join(data_dir, cache_dir_name)
             self.path_filename = path_filename
-
-        if self.cache and self.cache_type == "ram":
-            self.imgs = None
 
         if self.cache:
             self.cache_images(

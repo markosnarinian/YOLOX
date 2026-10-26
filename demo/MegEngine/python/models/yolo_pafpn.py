@@ -24,7 +24,7 @@ class YOLOPAFPN(M.Module):
         self.in_channels = in_channels
         Conv = DWConv if depthwise else BaseConv
 
-        self.upsample = UpSample(scale_factor=2, mode="bilinear")
+        self.upsample = UpSample(scale_factor=2, mode="nearest")
         self.lateral_conv0 = BaseConv(
             int(in_channels[2] * width), int(in_channels[1] * width), 1, 1, act=act
         )

@@ -6,11 +6,15 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <stdexcept>
 #include <opencv2/opencv.hpp>
 #include <iostream>
-#include <inference_engine.hpp>
-
-using namespace InferenceEngine;
+#include <openvino/openvino.hpp>
+#include <openvino/core/preprocess/pre_post_process.hpp>
 
 /**
  * @brief Define names based depends on Unicode path support
@@ -38,20 +42,11 @@ cv::Mat static_resize(cv::Mat& img) {
     return out;
 }
 
-void blobFromImage(cv::Mat& img, Blob::Ptr& blob){
+void tensorFromImage(cv::Mat& img, ov::Tensor& tensor){
     int channels = 3;
     int img_h = img.rows;
     int img_w = img.cols;
-    InferenceEngine::MemoryBlob::Ptr mblob = InferenceEngine::as<InferenceEngine::MemoryBlob>(blob);
-    if (!mblob) 
-    {
-        THROW_IE_EXCEPTION << "We expect blob to be inherited from MemoryBlob in matU8ToBlob, "
-            << "but by fact we were not able to cast inputBlob to MemoryBlob";
-    }
-    // locked memory holder should be alive all time while access to its buffer happens
-    auto mblobHolder = mblob->wmap();
-
-    float *blob_data = mblobHolder.as<float *>();
+    float *blob_data = tensor.data<float>();
 
     for (size_t c = 0; c < channels; c++) 
     {
@@ -430,87 +425,48 @@ int main(int argc, char* argv[]) {
         const std::string device_name {argv[3]};
         // -----------------------------------------------------------------------------------------------------
 
-        // --------------------------- Step 1. Initialize inference engine core
-        // -------------------------------------
-        Core ie;
-        // -----------------------------------------------------------------------------------------------------
+        ov::Core core;
 
         // Step 2. Read a model in OpenVINO Intermediate Representation (.xml and
         // .bin files) or ONNX (.onnx file) format
-        CNNNetwork network = ie.ReadNetwork(input_model);
-        if (network.getOutputsInfo().size() != 1)
+        auto model = core.read_model(input_model);
+        if (model->outputs().size() != 1)
             throw std::logic_error("Sample supports topologies with 1 output only");
-        if (network.getInputsInfo().size() != 1)
+        if (model->inputs().size() != 1)
             throw std::logic_error("Sample supports topologies with 1 input only");
-        // -----------------------------------------------------------------------------------------------------
-
-        // --------------------------- Step 3. Configure input & output
-        // ---------------------------------------------
-        // --------------------------- Prepare input blobs
-        // -----------------------------------------------------
-        InputInfo::Ptr input_info = network.getInputsInfo().begin()->second;
-        std::string input_name = network.getInputsInfo().begin()->first;
-
-        /* Mark input as resizable by setting of a resize algorithm.
-         * In this case we will be able to set an input blob of any shape to an
-         * infer request. Resize and layout conversions are executed automatically
-         * during inference */
-        //input_info->getPreProcess().setResizeAlgorithm(RESIZE_BILINEAR);
-        //input_info->setLayout(Layout::NHWC);
-        //input_info->setPrecision(Precision::FP32);
-
-        // --------------------------- Prepare output blobs
-        // ----------------------------------------------------
-        if (network.getOutputsInfo().empty()) {
-            std::cerr << "Network outputs info is empty" << std::endl;
-            return EXIT_FAILURE;
+        if (model->input().get_partial_shape().is_dynamic() ||
+            model->input().get_shape() != ov::Shape{1, 3, INPUT_H, INPUT_W}) {
+            throw std::logic_error("Sample requires a static [1, 3, 416, 416] input");
         }
-        DataPtr output_info = network.getOutputsInfo().begin()->second;
-        std::string output_name = network.getOutputsInfo().begin()->first;
 
-        output_info->setPrecision(Precision::FP32);
-        // -----------------------------------------------------------------------------------------------------
+        // The host buffers are FP32 NCHW BGR, even for an FP16 model.
+        // Resizing, padding and CHW packing remain in this demo, not the graph.
+        ov::preprocess::PrePostProcessor ppp(model);
+        ppp.input().tensor().set_element_type(ov::element::f32);
+        ppp.output().tensor().set_element_type(ov::element::f32);
+        model = ppp.build();
+        auto compiled_model = core.compile_model(model, device_name);
+        auto infer_request = compiled_model.create_infer_request();
 
-        // --------------------------- Step 4. Loading a model to the device
-        // ------------------------------------------
-        ExecutableNetwork executable_network = ie.LoadNetwork(network, device_name);
-        // -----------------------------------------------------------------------------------------------------
-
-        // --------------------------- Step 5. Create an infer request
-        // -------------------------------------------------
-        InferRequest infer_request = executable_network.CreateInferRequest();
-        // -----------------------------------------------------------------------------------------------------
-
-        // --------------------------- Step 6. Prepare input
-        // --------------------------------------------------------
-        /* Read input image to a blob and set it to an infer request without resize
-         * and layout conversions. */
         cv::Mat image = imread_t(input_image_path);
-	    cv::Mat pr_img = static_resize(image);
-        Blob::Ptr imgBlob = infer_request.GetBlob(input_name);     // just wrap Mat data by Blob::Ptr
-	    blobFromImage(pr_img, imgBlob);
-
-        // infer_request.SetBlob(input_name, imgBlob);  // infer_request accepts input blob of any size
-        // -----------------------------------------------------------------------------------------------------
-
-        // --------------------------- Step 7. Do inference
-        // --------------------------------------------------------
-        /* Running the request synchronously */
-        infer_request.Infer();
-        // -----------------------------------------------------------------------------------------------------
-
-        // --------------------------- Step 8. Process output
-        // ------------------------------------------------------
-        const Blob::Ptr output_blob = infer_request.GetBlob(output_name);
-        MemoryBlob::CPtr moutput = as<MemoryBlob>(output_blob);
-        if (!moutput) {
-            throw std::logic_error("We expect output to be inherited from MemoryBlob, "
-                                   "but by fact we were not able to cast output to MemoryBlob");
+        if (image.empty()) {
+            throw std::runtime_error("Could not read image: " + input_image_path);
         }
-        // locked memory holder should be alive all time while access to its buffer
-        // happens
-        auto moutputHolder = moutput->rmap();
-        const float* net_pred = moutputHolder.as<const PrecisionTrait<Precision::FP32>::value_type*>();
+        cv::Mat pr_img = static_resize(image);
+        auto input_tensor = infer_request.get_input_tensor();
+        tensorFromImage(pr_img, input_tensor);
+        infer_request.infer();
+
+        // Keep the tensor and request alive while decoding their output buffer.
+        auto output_tensor = infer_request.get_output_tensor();
+        size_t num_anchors = 0;
+        for (const int stride : {8, 16, 32}) {
+            num_anchors += (INPUT_H / stride) * (INPUT_W / stride);
+        }
+        if (output_tensor.get_shape() != ov::Shape{1, num_anchors, NUM_CLASSES + 5}) {
+            throw std::logic_error("Sample requires raw YOLOX output [1, anchors, 85] (strides 8, 16, 32)");
+        }
+        const float* net_pred = output_tensor.data<float>();
         
 	    int img_w = image.cols;
         int img_h = image.rows;

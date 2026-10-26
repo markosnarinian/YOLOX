@@ -5,7 +5,6 @@
 #include <chrono>
 #include <vector>
 #include <opencv2/opencv.hpp>
-#include <dirent.h>
 #include "NvInfer.h"
 #include "cuda_runtime_api.h"
 #include "logging.h"
@@ -521,7 +520,8 @@ int main(int argc, char** argv) {
     decode_outputs(prob, objects, scale, img_w, img_h);
     draw_objects(img, objects, input_image_path);
     // delete the pointer to the float
-    delete blob;
+    delete[] blob;
+    delete[] prob;
     // destroy the engine
     context->destroy();
     engine->destroy();

@@ -82,9 +82,9 @@ class JitOp:
             # try to import op from pre-installed package
             return importlib.import_module(self.absolute_name())
         except Exception:  # op not compiled, jit load
-            from yolox.utils import wait_for_the_master
-            with wait_for_the_master():  # to avoid race condition
-                return self.jit_load(verbose)
+            # torch's extension loader locks its build directory. Loading here
+            # must not require other ranks: evaluation calls this on rank 0 only.
+            return self.jit_load(verbose)
 
     def jit_load(self, verbose=True):
         from torch.utils.cpp_extension import load

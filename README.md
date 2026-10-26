@@ -68,10 +68,30 @@ This repo is an implementation of PyTorch version YOLOX, there is also a [MegEng
 
 Step1. Install YOLOX from source.
 ```shell
-git clone git@github.com:Megvii-BaseDetection/YOLOX.git
+git clone https://github.com/markosnarinian/YOLOX.git
 cd YOLOX
-pip3 install -v -e .  # or  python3 setup.py develop
+uv sync --locked --extra cpu --extra export
+uv run --no-sync pytest -q
 ```
+
+Use CPython 3.12 or 3.13; `.python-version` selects 3.12. Install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) first. The lockfile
+pins development dependencies. `--extra cpu` selects PyTorch's CPU index; on
+Linux/Windows NVIDIA systems use `--extra cuda` instead (CUDA 13.0 wheels).
+Do not combine the CPU and CUDA profiles. A compatible NVIDIA driver is required.
+For Jetson/ROCm, use vendor-compatible PyTorch separately; this lock is not a
+validated configuration for those targets.
+
+Pip remains supported: `python -m pip install -e '.[export]'`. Select compatible
+torch/torchvision binaries for your platform first; pip does not interpret uv's
+index profiles. Optional extras: `export`, `mlflow`, `wandb`. Development and docs
+groups are available with `uv sync --extra cpu --extra export --group docs`.
+Use `uv run --no-sync python ...` for the commands below after syncing a profile.
+
+See [supported platforms and checkpoint trust](docs/platform_support.md).
+Training/evaluation CLIs require CUDA; CPU inference/export is supported. MPS is
+explicitly unsupported. Without `--save_result`, demos require a graphical
+OpenCV session; save-only mode does not call GUI APIs.
 
 </details>
 

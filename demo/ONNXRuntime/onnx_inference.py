@@ -9,9 +9,8 @@ import numpy as np
 
 import onnxruntime
 
-from yolox.data.data_augment import preproc as preprocess
-from yolox.data.datasets import COCO_CLASSES
-from yolox.utils import mkdir, multiclass_nms, demo_postprocess, vis
+from yolox.deploy import COCO_CLASSES, demo_postprocess, mkdir, multiclass_nms, vis
+from yolox.deploy import preproc as preprocess
 
 
 def make_parser():
@@ -47,23 +46,55 @@ def make_parser():
     parser.add_argument(
         "--input_shape",
         type=str,
-        default="640,640",
-        help="Specify an input shape for inference.",
+        default=None,
+        help="Height,width; inferred from a static model by default. Must match the model.",
     )
+    parser.add_argument(
+        "--providers", nargs="+", default=["CPUExecutionProvider"],
+        help="Ordered ONNX Runtime execution providers; all requested providers must be installed.",
+    )
+    parser.add_argument("--threads", type=int, help="Positive CPU inference thread count.")
     return parser
 
 
-if __name__ == '__main__':
-    args = make_parser().parse_args()
-
-    input_shape = tuple(map(int, args.input_shape.split(',')))
+def main(args):
     origin_img = cv2.imread(args.image_path)
+    if origin_img is None:
+        raise ValueError(f"Cannot read input image: {args.image_path}")
+
+    unavailable = set(args.providers) - set(onnxruntime.get_available_providers())
+    if unavailable:
+        raise ValueError(f"Unavailable ONNX Runtime providers: {sorted(unavailable)}")
+    options = onnxruntime.SessionOptions()
+    if args.threads is not None:
+        if args.threads < 1:
+            raise ValueError("--threads must be positive")
+        options.intra_op_num_threads = args.threads
+    session = onnxruntime.InferenceSession(args.model, sess_options=options, providers=args.providers)
+    inputs = session.get_inputs()
+    if len(inputs) != 1 or len(session.get_outputs()) != 1:
+        raise ValueError("Expected one image input and one raw YOLOX output")
+    model_shape = inputs[0].shape
+    if len(model_shape) != 4 or inputs[0].type != "tensor(float)":
+        raise ValueError("Expected float32 NCHW input")
+    input_shape = (tuple(map(int, args.input_shape.split(','))) if args.input_shape
+                   else tuple(model_shape[2:]))
+    if (len(input_shape) != 2
+            or any(not isinstance(size, int) or size <= 0 or size % 32 for size in input_shape)):
+        raise ValueError("Specify positive --input_shape height,width multiples of 32")
+    expected_shape = (1, 3, *input_shape)
+    if any(isinstance(size, int) and size != expected
+           for size, expected in zip(model_shape, expected_shape)):
+        raise ValueError(f"Input shape {expected_shape} does not match model {model_shape}")
     img, ratio = preprocess(origin_img, input_shape)
 
-    session = onnxruntime.InferenceSession(args.model)
-
-    ort_inputs = {session.get_inputs()[0].name: img[None, :, :, :]}
+    ort_inputs = {inputs[0].name: img[None, :, :, :]}
     output = session.run(None, ort_inputs)
+    anchors = sum((input_shape[0] // stride) * (input_shape[1] // stride)
+                  for stride in (8, 16, 32))
+    if (output[0].shape != (1, anchors, 85) or output[0].dtype != np.float32
+            or not np.isfinite(output[0]).all()):
+        raise ValueError("Expected finite float32 raw COCO predictions [1,anchors,85]")
     predictions = demo_postprocess(output[0], input_shape)[0]
 
     boxes = predictions[:, :4]
@@ -83,4 +114,9 @@ if __name__ == '__main__':
 
     mkdir(args.output_dir)
     output_path = os.path.join(args.output_dir, os.path.basename(args.image_path))
-    cv2.imwrite(output_path, origin_img)
+    if not cv2.imwrite(output_path, origin_img):
+        raise OSError(f"Cannot write output image: {output_path}")
+
+
+if __name__ == '__main__':
+    main(make_parser().parse_args())

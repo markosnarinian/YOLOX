@@ -49,5 +49,5 @@ def build_yolox(name="yolox-s"):
 def build_and_load(weight_file, name="yolox-s"):
     model = build_yolox(name)
     model_weights = mge.load(weight_file)
-    model.load_state_dict(model_weights, strict=False)
+    model.load_state_dict(model_weights, strict=True)
     return model

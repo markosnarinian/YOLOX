@@ -11,9 +11,8 @@ import megengine as mge
 import megengine.functional as F
 from loguru import logger
 
-from yolox.data.datasets import COCO_CLASSES
-from yolox.utils import vis
-from yolox.data.data_augment import preproc as preprocess
+from yolox.deploy import COCO_CLASSES, vis
+from yolox.deploy import preproc as preprocess
 
 from build import build_and_load
 
@@ -167,9 +166,11 @@ def image_demo(predictor, vis_folder, path, current_time, save_result):
             save_file_name = os.path.join(save_folder, os.path.basename(image_name))
             logger.info("Saving detection result in {}".format(save_file_name))
             cv2.imwrite(save_file_name, result_image)
-        ch = cv2.waitKey(0)
-        if ch == 27 or ch == ord("q") or ch == ord("Q"):
-            break
+        else:
+            cv2.imshow("yolox", result_image)
+            ch = cv2.waitKey(0)
+            if ch in (27, ord("q"), ord("Q")):
+                break
 
 
 def imageflow_demo(predictor, vis_folder, current_time, args):
@@ -177,18 +178,19 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
     width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)  # float
     height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)  # float
     fps = cap.get(cv2.CAP_PROP_FPS)
-    save_folder = os.path.join(
-        vis_folder, time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
-    )
-    os.makedirs(save_folder, exist_ok=True)
-    if args.demo == "video":
-        save_path = os.path.join(save_folder, os.path.basename(args.path))
-    else:
-        save_path = os.path.join(save_folder, "camera.mp4")
-    logger.info(f"video save_path is {save_path}")
-    vid_writer = cv2.VideoWriter(
-        save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (int(width), int(height))
-    )
+    if args.save_result:
+        save_folder = os.path.join(
+            vis_folder, time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
+        )
+        os.makedirs(save_folder, exist_ok=True)
+        if args.demo == "video":
+            save_path = os.path.join(save_folder, os.path.basename(args.path))
+        else:
+            save_path = os.path.join(save_folder, "camera.mp4")
+        logger.info(f"video save_path is {save_path}")
+        vid_writer = cv2.VideoWriter(
+            save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (int(width), int(height))
+        )
     while True:
         ret_val, frame = cap.read()
         if ret_val:
@@ -196,17 +198,23 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
             result_frame = predictor.visual(outputs[0], img_info)
             if args.save_result:
                 vid_writer.write(result_frame)
-            ch = cv2.waitKey(1)
-            if ch == 27 or ch == ord("q") or ch == ord("Q"):
-                break
+            else:
+                cv2.imshow("yolox", result_frame)
+                ch = cv2.waitKey(1)
+                if ch in (27, ord("q"), ord("Q")):
+                    break
         else:
             break
+    cap.release()
+    if args.save_result:
+        vid_writer.release()
 
 
 def main(args):
     file_name = os.path.join("./yolox_outputs", args.name)
     os.makedirs(file_name, exist_ok=True)
 
+    vis_folder = None
     if args.save_result:
         vis_folder = os.path.join(file_name, "vis_res")
         os.makedirs(vis_folder, exist_ok=True)

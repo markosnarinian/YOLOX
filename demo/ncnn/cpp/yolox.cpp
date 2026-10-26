@@ -246,7 +246,8 @@ static void generate_yolox_proposals(std::vector<GridAndStride> grid_strides, co
     } // point anchor loop
 }
 
-static int detect_yolox(const cv::Mat& bgr, std::vector<Object>& objects)
+static int detect_yolox(const cv::Mat& bgr, std::vector<Object>& objects,
+                       const char* param_path, const char* model_path)
 {
     ncnn::Net yolox;
 
@@ -258,8 +259,11 @@ static int detect_yolox(const cv::Mat& bgr, std::vector<Object>& objects)
 
     // original pretrained model from https://github.com/Megvii-BaseDetection/YOLOX
     // ncnn model param: https://github.com/Megvii-BaseDetection/storage/releases/download/0.0.1/yolox_s_ncnn.tar.gz
-    yolox.load_param("yolox.param");
-    yolox.load_model("yolox.bin");
+    if (yolox.load_param(param_path) != 0 || yolox.load_model(model_path) != 0)
+    {
+        fprintf(stderr, "Failed to load model: %s / %s\n", param_path, model_path);
+        return -1;
+    }
 
     int img_w = bgr.cols;
     int img_h = bgr.rows;
@@ -291,18 +295,26 @@ static int detect_yolox(const cv::Mat& bgr, std::vector<Object>& objects)
 
     ncnn::Extractor ex = yolox.create_extractor();
 
-    ex.input("images", in_pad);
+    if (ex.input("images", in_pad) != 0)
+        return -1;
 
     std::vector<Object> proposals;
 
     {
         ncnn::Mat out;
-        ex.extract("output", out);
+        if (ex.extract("output", out) != 0)
+            return -1;
 
         static const int stride_arr[] = {8, 16, 32}; // might have stride=64 in YOLOX
         std::vector<int> strides(stride_arr, stride_arr + sizeof(stride_arr) / sizeof(stride_arr[0]));
         std::vector<GridAndStride> grid_strides;
         generate_grids_and_stride(YOLOX_TARGET_SIZE, strides, grid_strides);
+        if (out.empty() || out.w <= 5 || out.h != (int)grid_strides.size()
+            || out.c != 1 || out.elempack != 1 || out.elemsize != sizeof(float))
+        {
+            fprintf(stderr, "Unexpected YOLOX output shape or dtype\n");
+            return -1;
+        }
         generate_yolox_proposals(grid_strides, out, YOLOX_CONF_THRESH, proposals);
     }
 
@@ -392,9 +404,9 @@ static void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects)
 
 int main(int argc, char** argv)
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 4)
     {
-        fprintf(stderr, "Usage: %s [imagepath]\n", argv[0]);
+        fprintf(stderr, "Usage: %s imagepath [model.param model.bin]\n", argv[0]);
         return -1;
     }
 
@@ -408,7 +420,9 @@ int main(int argc, char** argv)
     }
 
     std::vector<Object> objects;
-    detect_yolox(m, objects);
+    if (detect_yolox(m, objects, argc == 4 ? argv[2] : "yolox.param",
+                     argc == 4 ? argv[3] : "yolox.bin") != 0)
+        return -1;
 
     draw_objects(m, objects);
 

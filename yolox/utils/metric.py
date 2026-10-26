@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) Megvii Inc. All rights reserved.
 import functools
-import os
 import time
 from collections import defaultdict, deque
 import psutil
@@ -22,15 +21,11 @@ __all__ = [
 
 
 def get_total_and_free_memory_in_Mb(cuda_device):
-    devices_info_str = os.popen(
-        "nvidia-smi --query-gpu=memory.total,memory.used --format=csv,nounits,noheader"
-    )
-    devices_info = devices_info_str.read().strip().split("\n")
-    if "CUDA_VISIBLE_DEVICES" in os.environ:
-        visible_devices = os.environ["CUDA_VISIBLE_DEVICES"].split(',')
-        cuda_device = int(visible_devices[cuda_device])
-    total, used = devices_info[int(cuda_device)].split(",")
-    return int(total), int(used)
+    """Return total and used MiB for a logical CUDA device (legacy API name)."""
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA memory information requires an available CUDA device")
+    free, total = torch.cuda.mem_get_info(cuda_device)
+    return total // (1024 * 1024), (total - free) // (1024 * 1024)
 
 
 def occupy_mem(cuda_device, mem_ratio=0.9):
@@ -40,7 +35,9 @@ def occupy_mem(cuda_device, mem_ratio=0.9):
     total, used = get_total_and_free_memory_in_Mb(cuda_device)
     max_mem = int(total * mem_ratio)
     block_mem = max_mem - used
-    x = torch.cuda.FloatTensor(256, 1024, block_mem)
+    if block_mem <= 0:
+        return
+    x = torch.empty(256, 1024, block_mem, device=f"cuda:{cuda_device}", dtype=torch.float32)
     del x
     time.sleep(5)
 
@@ -49,7 +46,7 @@ def gpu_mem_usage():
     """
     Compute the GPU memory usage for the current device (MB).
     """
-    mem_usage_bytes = torch.cuda.max_memory_allocated()
+    mem_usage_bytes = torch.cuda.max_memory_allocated() if torch.cuda.is_available() else 0
     return mem_usage_bytes / (1024 * 1024)
 
 

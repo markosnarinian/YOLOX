@@ -9,6 +9,7 @@ import copy
 import time
 
 import numpy as np
+from loguru import logger
 from pycocotools.cocoeval import COCOeval
 
 from .jit_ops import FastCOCOEvalOp
@@ -21,7 +22,11 @@ class COCOeval_opt(COCOeval):
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.module = FastCOCOEvalOp().load()
+        try:
+            self.module = FastCOCOEvalOp().load()
+        except (ImportError, OSError, RuntimeError) as error:
+            logger.warning("Fast COCO extension unavailable; using pycocotools: {}", error)
+            self.module = None
 
     def evaluate(self):
         """
@@ -31,6 +36,8 @@ class COCOeval_opt(COCOeval):
         self.evalImgs because this datastructure is a computational bottleneck.
         :return: None
         """
+        if self.module is None:
+            return super().evaluate()
         tic = time.time()
 
         print("Running per image evaluation...")
@@ -127,6 +134,8 @@ class COCOeval_opt(COCOeval):
         Accumulate per image evaluation results and store the result in self.eval.  Does not
         support changing parameter settings from those used by self.evaluate()
         """
+        if self.module is None:
+            return super().accumulate()
         print("Accumulating evaluation results...")
         tic = time.time()
         if not hasattr(self, "_evalImgs_cpp"):

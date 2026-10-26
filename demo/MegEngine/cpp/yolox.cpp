@@ -4,6 +4,9 @@
 #include "megbrain/gopt/inference.h"
 #include "megbrain/opr/search_policy/algo_chooser_helper.h"
 #include "megbrain/serialization/serializer.h"
+#include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -24,7 +27,7 @@ constexpr int INPUT_H = 640;
 using namespace mgb;
 
 cv::Mat static_resize(cv::Mat &img) {
-  float r = std::min(INPUT_W / (img.cols * 1.0), INPUT_H / (img.rows * 1.0));
+  double r = std::min(INPUT_W / (img.cols * 1.0), INPUT_H / (img.rows * 1.0));
   int unpad_w = r * img.cols;
   int unpad_h = r * img.rows;
   cv::Mat re(unpad_h, unpad_w, CV_8UC3);
@@ -350,17 +353,24 @@ cg::ComputingGraph::OutputSpecItem make_callback_copy(SymbolVar dev,
   return {dev, cb};
 }
 
+bool write_tensor(const std::string &path, const HostTensorND &tensor) {
+  std::ofstream output(path, std::ios::binary);
+  output.write(reinterpret_cast<const char *>(tensor.ptr<float>()),
+               tensor.shape().total_nr_elems() * sizeof(float));
+  return static_cast<bool>(output);
+}
+
 int main(int argc, char *argv[]) {
   serialization::GraphLoader::LoadConfig load_config;
   load_config.comp_graph = ComputingGraph::make();
   auto &&graph_opt = load_config.comp_graph->options();
   graph_opt.graph_opt_level = 0;
 
-  if (argc != 9) {
+  if (argc != 9 && argc != 10) {
     std::cout << "Usage : " << argv[0]
               << " <path_to_model> <path_to_image> <device> <warmup_count> "
                  "<thread_number> <use_fast_run> <use_weight_preprocess> "
-                 "<run_with_fp16>"
+                 "<run_with_fp16> [validation_dump_prefix]"
               << std::endl;
     return EXIT_FAILURE;
   }
@@ -422,7 +432,12 @@ int main(int argc, char *argv[]) {
 
   std::unique_ptr<serialization::InputFile> inp_file =
       serialization::InputFile::make_fs(input_model.c_str());
-  auto loader = serialization::GraphLoader::make(std::move(inp_file));
+  auto format = serialization::GraphLoader::identify_graph_dump_format(*inp_file);
+  if (!format.valid()) {
+    std::cerr << "Unrecognized MegEngine graph format" << std::endl;
+    return EXIT_FAILURE;
+  }
+  auto loader = serialization::GraphLoader::make(std::move(inp_file), format.val());
   serialization::GraphLoader::LoadResult network =
       loader->load(load_config, false);
 
@@ -435,14 +450,29 @@ int main(int argc, char *argv[]) {
                                                 strategy);
   }
 
-  auto data = network.tensor_map["data"];
+  auto input = network.tensor_map.find("data");
+  if (input == network.tensor_map.end() || !input->second ||
+      network.tensor_map.size() != 1 || network.output_var_list.size() != 1) {
+    std::cerr << "Expected one input named data and one raw YOLOX output" << std::endl;
+    return EXIT_FAILURE;
+  }
+  auto data = input->second;
+  if (data->dtype() != dtype::Float32() ||
+      !data->shape().eq_shape(TensorShape{1, 3, INPUT_H, INPUT_W})) {
+    std::cerr << "Expected float32 input [1, 3, 640, 640]" << std::endl;
+    return EXIT_FAILURE;
+  }
   cv::Mat image = cv::imread(input_image_path);
+  if (image.empty()) {
+    std::cerr << "Cannot read image: " << input_image_path << std::endl;
+    return EXIT_FAILURE;
+  }
   cv::Mat pr_img = static_resize(image);
-  float *data_ptr = data->resize({1, 3, 640, 640}).ptr<float>();
+  float *data_ptr = data->ptr<float>();
   blobFromImage(pr_img, data_ptr);
   HostTensorND predict;
   std::unique_ptr<cg::AsyncExecutable> func = network.graph->compile(
-      {make_callback_copy(network.output_var_map.begin()->second, predict)});
+      {make_callback_copy(network.output_var_list[0], predict)});
 
   for (auto i = 0; i < warmup_count; i++) {
     std::cout << "warmup: " << i << std::endl;
@@ -456,7 +486,25 @@ int main(int argc, char *argv[]) {
   std::chrono::duration<double> exec_seconds = end - start;
   std::cout << "elapsed time: " << exec_seconds.count() << "s" << std::endl;
 
+  if (predict.dtype() != dtype::Float32() ||
+      !predict.shape().eq_shape(TensorShape{1, 8400, 85}) ||
+      !predict.layout().is_contiguous()) {
+    std::cerr << "Expected contiguous float32 raw output [1, 8400, 85]" << std::endl;
+    return EXIT_FAILURE;
+  }
   float *predict_ptr = predict.ptr<float>();
+  for (size_t i = 0; i < predict.shape().total_nr_elems(); ++i) {
+    if (!std::isfinite(predict_ptr[i])) {
+      std::cerr << "Nonfinite prediction at index " << i << std::endl;
+      return EXIT_FAILURE;
+    }
+  }
+  if (argc == 10 &&
+      (!write_tensor(std::string(argv[9]) + ".input.f32", *data) ||
+       !write_tensor(std::string(argv[9]) + ".output.f32", predict))) {
+    std::cerr << "Cannot write validation tensors" << std::endl;
+    return EXIT_FAILURE;
+  }
   int img_w = image.cols;
   int img_h = image.rows;
   float scale =
@@ -464,6 +512,19 @@ int main(int argc, char *argv[]) {
   std::vector<Object> objects;
 
   decode_outputs(predict_ptr, objects, scale, img_w, img_h);
+  if (argc == 10) {
+    std::ofstream detections(std::string(argv[9]) + ".detections.csv");
+    detections << std::setprecision(9);
+    for (const auto &object : objects) {
+      detections << object.label << ',' << object.prob << ',' << object.rect.x
+                 << ',' << object.rect.y << ',' << object.rect.width << ','
+                 << object.rect.height << '\n';
+    }
+    if (!detections) {
+      std::cerr << "Cannot write validation detections" << std::endl;
+      return EXIT_FAILURE;
+    }
+  }
   draw_objects(image, objects);
 
   return EXIT_SUCCESS;

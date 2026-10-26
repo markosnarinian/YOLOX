@@ -161,8 +161,7 @@ class MlflowLogger:
 
         self._mlflow_log_nth_epoch_models = os.getenv("YOLOX_MLFLOW_LOG_Nth_EPOCH_MODELS",
                                                       "False").upper() in self.ENV_VARS_TRUE_VALUES
-        self.run_name = os.getenv("YOLOX_MLFLOW_RUN_NAME", None)
-        self.run_name = None if len(self.run_name.strip()) == 0 else self.run_name
+        self.run_name = (os.getenv("YOLOX_MLFLOW_RUN_NAME") or "").strip() or None
         self._flatten_params = os.getenv("YOLOX_MLFLOW_FLATTEN_PARAMS",
                                          "FALSE").upper() in self.ENV_VARS_TRUE_VALUES
         self._nested_run = os.getenv("MLFLOW_NESTED_RUN",

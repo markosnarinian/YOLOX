@@ -9,10 +9,14 @@
 
 #include <jni.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <string>
 #include <vector>
 
 // ncnn
+#include "gpu.h"
 #include "layer.h"
 #include "net.h"
 #include "benchmark.h"
@@ -20,7 +24,8 @@
 static ncnn::UnlockedPoolAllocator g_blob_pool_allocator;
 static ncnn::PoolAllocator g_workspace_pool_allocator;
 
-static ncnn::Net yoloX;
+static ncnn::Net yoloXCpu;
+static ncnn::Net yoloXGpu;
 
 class YoloV5Focus : public ncnn::Layer
 {
@@ -271,6 +276,8 @@ JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved)
 {
     __android_log_print(ANDROID_LOG_DEBUG, "YOLOXncnn", "JNI_OnUnload");
 
+    yoloXGpu.clear();
+    yoloXCpu.clear();
     ncnn::destroy_gpu_instance();
 }
 
@@ -284,29 +291,28 @@ JNIEXPORT jboolean JNICALL Java_com_megvii_yoloXncnn_YOLOXncnn_Init(JNIEnv* env,
     opt.workspace_allocator = &g_workspace_pool_allocator;
     opt.use_packing_layout = true;
 
-    // use vulkan compute
-    if (ncnn::get_gpu_count() != 0)
-        opt.use_vulkan_compute = true;
-
     AAssetManager* mgr = AAssetManager_fromJava(env, assetManager);
 
-    yoloX.opt = opt;
-
-    yoloX.register_custom_layer("YoloV5Focus", YoloV5Focus_layer_creator);
-
-    // init param
+    // ncnn now selects the backend before loading, not per Extractor.
+    // Keep both buttons functional without mutating options on a loaded Net.
+    ncnn::Net* nets[] = {&yoloXCpu, &yoloXGpu};
+    const int net_count = ncnn::get_gpu_count() != 0 ? 2 : 1;
+    for (int i = 0; i < net_count; i++)
     {
+        ncnn::Net& yoloX = *nets[i];
+        yoloX.clear();
+        opt.use_vulkan_compute = i == 1;
+        yoloX.opt = opt;
+        yoloX.register_custom_layer("YoloV5Focus", YoloV5Focus_layer_creator);
+
         int ret = yoloX.load_param(mgr, "yolox.param");
         if (ret != 0)
         {
             __android_log_print(ANDROID_LOG_DEBUG, "YOLOXncnn", "load_param failed");
             return JNI_FALSE;
         }
-    }
 
-    // init bin
-    {
-        int ret = yoloX.load_model(mgr, "yolox.bin");
+        ret = yoloX.load_model(mgr, "yolox.bin");
         if (ret != 0)
         {
             __android_log_print(ANDROID_LOG_DEBUG, "YOLOXncnn", "load_model failed");
@@ -384,9 +390,7 @@ JNIEXPORT jobjectArray JNICALL Java_com_megvii_yoloXncnn_YOLOXncnn_Detect(JNIEnv
     std::vector<Object> objects;
     {
 
-        ncnn::Extractor ex = yoloX.create_extractor();
-
-        ex.set_vulkan_compute(use_gpu);
+        ncnn::Extractor ex = (use_gpu == JNI_TRUE ? yoloXGpu : yoloXCpu).create_extractor();
 
         ex.input("images", in_pad);
 

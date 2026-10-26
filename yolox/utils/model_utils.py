@@ -121,7 +121,7 @@ def replace_module(module, replaced_module_type, new_module_type, replace_func=N
         model = replace_func(replaced_module_type, new_module_type)
     else:  # recurrsively replace
         for name, child in module.named_children():
-            new_child = replace_module(child, replaced_module_type, new_module_type)
+            new_child = replace_module(child, replaced_module_type, new_module_type, replace_func)
             if new_child is not child:  # child is already replaced
                 model.add_module(name, new_child)
 
@@ -182,5 +182,7 @@ def adjust_status(module: nn.Module, training: bool = False) -> nn.Module:
             m.training = status.pop(m)
 
     backup_status(module)
-    yield module
-    recover_status(module)
+    try:
+        yield module
+    finally:
+        recover_status(module)

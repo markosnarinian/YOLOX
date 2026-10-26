@@ -50,6 +50,7 @@ def make_parser():
         "--device",
         default="cpu",
         type=str,
+        choices=("cpu", "gpu"),
         help="device to run our model, can either be cpu or gpu",
     )
     parser.add_argument("--conf", default=0.3, type=float, help="test conf")
@@ -123,9 +124,10 @@ class Predictor(object):
             from torch2trt import TRTModule
 
             model_trt = TRTModule()
-            model_trt.load_state_dict(torch.load(trt_file))
+            model_trt.load_state_dict(torch.load(trt_file, weights_only=True))
 
-            x = torch.ones(1, 3, exp.test_size[0], exp.test_size[1]).cuda()
+            parameter = next(self.model.parameters())
+            x = torch.ones(1, 3, *exp.test_size, device=parameter.device, dtype=parameter.dtype)
             self.model(x)
             self.model = model_trt
 
@@ -201,9 +203,11 @@ def image_demo(predictor, vis_folder, path, current_time, save_result):
             save_file_name = os.path.join(save_folder, os.path.basename(image_name))
             logger.info("Saving detection result in {}".format(save_file_name))
             cv2.imwrite(save_file_name, result_image)
-        ch = cv2.waitKey(0)
-        if ch == 27 or ch == ord("q") or ch == ord("Q"):
-            break
+        else:
+            cv2.imshow("yolox", result_image)
+            ch = cv2.waitKey(0)
+            if ch in (27, ord("q"), ord("Q")):
+                break
 
 
 def imageflow_demo(predictor, vis_folder, current_time, args):
@@ -234,14 +238,21 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
             else:
                 cv2.namedWindow("yolox", cv2.WINDOW_NORMAL)
                 cv2.imshow("yolox", result_frame)
-            ch = cv2.waitKey(1)
-            if ch == 27 or ch == ord("q") or ch == ord("Q"):
-                break
+                ch = cv2.waitKey(1)
+                if ch in (27, ord("q"), ord("Q")):
+                    break
         else:
             break
+    cap.release()
+    if args.save_result:
+        vid_writer.release()
 
 
 def main(exp, args):
+    if args.device not in ("cpu", "gpu"):
+        raise ValueError(f"Unsupported device {args.device!r}; choose cpu or gpu (CUDA)")
+    if args.fp16 and args.device == "cpu" and not args.trt:
+        raise ValueError("--fp16 requires a CUDA device")
     if not args.experiment_name:
         args.experiment_name = exp.exp_name
 
@@ -280,7 +291,7 @@ def main(exp, args):
         else:
             ckpt_file = args.ckpt
         logger.info("loading checkpoint")
-        ckpt = torch.load(ckpt_file, map_location="cpu")
+        ckpt = torch.load(ckpt_file, map_location="cpu", weights_only=True)
         # load the model state dict
         model.load_state_dict(ckpt["model"])
         logger.info("loaded checkpoint done.")

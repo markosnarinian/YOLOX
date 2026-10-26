@@ -9,6 +9,8 @@ Welcome to YOLOX's documentation!
    :caption: Quick Run
    
    quick_run
+   platform_support
+   model_assets
    model_zoo
 
 .. toctree::
@@ -21,6 +23,7 @@ Welcome to YOLOX's documentation!
    :maxdepth: 2
    :caption: Deployment
 
+   cm5_deployment
    demo/trt_py_readme
    demo/trt_cpp_readme
    demo/megengine_cpp_readme

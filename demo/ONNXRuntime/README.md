@@ -4,10 +4,22 @@ This doc introduces how to convert your pytorch model into onnx, and how to run 
 
 ### Step1: Install onnxruntime
 
-run the following command to install onnxruntime:
+From the repository root, install the package and export dependencies:
 ```shell
-pip install onnxruntime
+uv sync --locked --extra cpu --extra export
 ```
+
+The demo uses `yolox.deploy`, whose import path requires only NumPy/OpenCV, not
+torch. The standard package installation still includes PyTorch for training.
+An exported model can run in a separate deployment environment with NumPy,
+OpenCV and ONNX Runtime plus a YOLOX wheel installed with `--no-deps`; this
+advanced installation intentionally does not support the training/export CLIs.
+
+For the proposed CM5 target, use the standalone, headless dependency lock and
+source-only bundle described in `docs/cm5_deployment.md` at the repository root.
+That path does not install the training package. Actual CPU-only ONNX inference
+on the Asus is accepted repository validation; physical CM5 certification is
+outside this task. CPU-host evidence is not presented as an on-device measurement.
 
 ### Step2: Get ONNX models
 
@@ -40,7 +52,7 @@ python3 tools/export_onnx.py --output-name yolox_s.onnx -n yolox-s -c yolox_s.pt
 Notes:
 * -n: specify a model name. The model name must be one of the [yolox-s,m,l,x and yolox-nano, yolox-tiny, yolov3]
 * -c: the model you have trained
-* -o: opset version, default 11. **However, if you will further convert your onnx model to [OpenVINO](https://github.com/Megvii-BaseDetection/YOLOX/demo/OpenVINO/), please specify the opset version to 10.**
+* -o: opset version, default 17. Legacy OpenVINO conversion may require an older opset and a matching legacy SDK; it is not covered by the modern ONNX Runtime path.
 * --no-onnxsim: disable onnxsim
 * To customize an input shape for onnx model,  modify the following code in tools/export.py:
 
@@ -75,4 +87,12 @@ Notes:
 * -m: your converted onnx model
 * -i: input_image
 * -s: score threshold for visualization.
-* --input_shape: should be consistent with the shape you used for onnx convertion.
+* --input_shape: optional height,width; inferred from static models by default.
+  Overrides must match the model. Nano's default export is 416,416, not 640,640.
+  The decoder expects raw COCO predictions with strides 8/16/32.
+* --threads: optional positive CPU inference thread count. Measure on the target
+  rather than assuming more threads improve sustained throughput.
+* --providers: ordered providers, default `CPUExecutionProvider`. For example,
+  `--providers CUDAExecutionProvider CPUExecutionProvider` requires the matching
+  GPU-enabled ONNX Runtime package and CUDA libraries. Unavailable provider names
+  fail explicitly instead of silently switching to CPU.

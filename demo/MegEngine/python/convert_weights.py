@@ -2,9 +2,9 @@
 # -*- coding:utf-8 -*-
 import argparse
 from collections import OrderedDict
+from pathlib import Path
 
-import megengine as mge
-import torch
+import numpy as np
 
 
 def make_parser():
@@ -21,7 +21,13 @@ def make_parser():
 
 
 def numpy_weights(weight_file):
-    torch_weights = torch.load(weight_file, map_location="cpu")
+    if Path(weight_file).suffix == ".npz":
+        with np.load(weight_file, allow_pickle=False) as weights:
+            return OrderedDict((key, weights[key]) for key in weights.files)
+
+    import torch
+
+    torch_weights = torch.load(weight_file, map_location="cpu", weights_only=True)
     if "model" in torch_weights:
         torch_weights = torch_weights["model"]
     new_dict = OrderedDict()
@@ -32,6 +38,13 @@ def numpy_weights(weight_file):
 
 def map_weights(weight_file, output_file):
     torch_weights = numpy_weights(weight_file)
+    # A plain-array bridge lets modern Torch and legacy MegEngine run in separate
+    # environments. NPZ retains PyTorch shapes; conversion happens on import.
+    if Path(output_file).suffix == ".npz":
+        np.savez(output_file, **torch_weights)
+        return
+
+    import megengine as mge
 
     new_dict = OrderedDict()
     for k, v in torch_weights.items():
