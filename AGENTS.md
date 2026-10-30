@@ -31,3 +31,22 @@
   `demo/ONNXRuntime/requirements-cm5.txt` via `uv pip sync --require-hashes`;
   it deliberately does not install the training stack. See
   `docs/cm5_deployment.md` for bundle/export instructions.
+
+## Documentation maintenance
+
+- Update `README.md`, including its first "Fork documentation" section, in the
+  same change whenever features, behavior, settings, defaults, shortcuts, APIs,
+  compatibility, installation/deployment instructions or development workflows
+  affect the documentation. Update linked detailed guides where relevant;
+  prefer links over unnecessarily duplicating their instructions.
+- Clearly distinguish fork-specific changes from inherited upstream capabilities.
+  Describe the final implemented behavior, not superseded iterations or plans.
+- Keep the Fork documentation contents list synchronized with every subsection
+  and validate its heading links when adding, renaming or removing headings.
+- Verify documentation claims, commands, settings and defaults against the
+  current implementation. Remove obsolete claims and accurately state validation
+  limitations; historical evidence is not a new test run or a support guarantee.
+- Preserve unrelated README content. Implementation-only changes that do not
+  affect documented behavior or workflows do not require README edits.
+- Validate changed Markdown, local links/heading anchors and whitespace before
+  shipping documentation changes.
